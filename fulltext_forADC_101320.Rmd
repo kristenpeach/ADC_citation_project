@@ -1,0 +1,147 @@
+---
+title: "using_pubchunks_ADC_citations"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#install.packages("pubchunks")
+library(pubchunks)
+#install.packages("fulltext")
+library(fulltext)
+
+library(arcticdatautils)
+library(dataone)
+library(datapack)
+library(EML)
+library(remotes)
+library(XML)
+library(datamgmt)
+library(tidyverse)
+library(here)
+#install.packages("reprex")
+library(reprex)
+library(tibble)
+library(readr)
+library(dplyr)
+library(xlsx)
+
+```
+
+Getting a list of data package DOI's from the ADC
+
+```{r}
+
+ cn <- CNode("PROD")
+    mn <- getMNode(cn, "urn:node:ARCTIC")
+
+    result <-
+        query(mn, list(
+                    q = "formatType:METADATA AND (*:* NOT obsoletedBy:*)",
+                    fl = "identifier,rightsHolder,formatId",
+                    start = "0",
+                    rows = "15000"),
+                as = "data.frame"
+        )
+    dois <- grep("doi", result$identifier, value = T) %>%
+        gsub("doi:", "", .data$.)
+
+dois <- result$identifier 
+
+#Took a random sample of dois from the list
+
+doi_100_sample <- sample(dois, 100)
+
+doi_10_sample <- sample(dois, 10)
+
+
+```
+
+Queried several databases for publications that include any of the dois in my sample. Also queried single dois and did not find any results
+
+```{r}
+
+res <- ft_search(query = 'doi:10.5065/D6M043F3', from=c('plos','crossref','arxiv', 'biorxivr', 'europe_pmc', 'ma'), limit = 10)
+
+articles <- ft_get(res$plos$data$id)
+
+titles <- pub_chunks(fulltext::ft_collect(articles), sections="title")
+
+
+```
+
+
+Simple ADC Search
+
+To find documents where your search terms appear adjacent to each other, enclose the terms in double quotation marks: "cell behaviour". When you use double quotation marks AND is not automatically inserted between terms.
+
+```{r, message = FALSE}
+
+res1 <- ft_search(query = "Arctic Data Center", from=c('plos','crossref','arxiv', 'biorxivr', 'europe_pmc', 'ma'), limit = 1000)
+
+plos_articles <- ft_get(res1$plos$data$id[1:1000])
+
+plos_titles <- pub_chunks(fulltext::ft_collect(plos_articles), sections= c("doi", "title", "authors"))
+
+plos_table <- pub_tabularize(plos_titles, bind = TRUE)
+
+plos_table <- plos_table %>% select(doi, title, authors.given_names, authors.surname, authors.given_names.1, authors.surname.1, authors.given_names.2, authors.surname.2, authors.given_names.3, authors.surname.3, .publisher)
+
+write.xlsx(plos_table, file = "plos_table.xlsx", sheetName = "Sheet1", 
+  col.names = TRUE, row.names = FALSE, append = FALSE)
+
+```
+
+
+
+```{r}
+
+res2 <- ft_search(query = 'arcticdata.io', from=c('plos','crossref','arxiv', 'biorxivr', 'europe_pmc', 'ma'), limit = 100)
+
+plos_articles_io <- ft_get(res2$plos$data$id)
+
+plos_titles_io <- pub_chunks(fulltext::ft_collect(plos_articles_io), sections= c("doi", "title", "authors"))
+
+plos_table_io <- pub_tabularize(plos_titles_io, bind = TRUE)
+
+plos_table_io <- plos_table_io %>% select(doi, title, authors.given_names, authors.surname, authors.given_names.1, authors.surname.1, authors.given_names.2, authors.surname.2, authors.given_names.3, authors.surname.3, .publisher)
+
+
+write.xlsx(plos_table_io, file = "plos_table_io.xlsx", sheetName = "Sheet1", col.names = TRUE, row.names = FALSE, append = FALSE)
+
+
+```
+
+Using curling brackets within the query searches for an exact match to the phrase "Arctic Data Center". Plos does not allow for this type of search so we have to exclude it or the code won't run.
+
+```{r}
+
+
+
+res3 <- ft_search(query = "{Arctic Data Center}", from=c('crossref','arxiv', 'biorxiv', 'europmc'), limit = 100)
+
+#For some reason I can't pull article titles from Biorxiv but I can get doi's
+
+biorxiv_articles_exact <- ft_get(res3$biorxiv$data$doi[1:21])
+
+biorxiv_titles_exact <- pub_chunks(fulltext::ft_collect(biorxiv_articles_exact), sections = c("doi", "title", "authors"))
+
+biorxiv_table_exact <- biorxiv_titles_exact$biorxiv[1:21]
+
+write.xlsx(biorxiv_table_exact, file = "biorxiv_table_exact.xlsx", sheetName = "Sheet1", 
+  col.names = TRUE, row.names = FALSE, append = FALSE)
+
+```
+
+
+
+
+
+
+
+
+
