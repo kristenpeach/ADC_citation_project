@@ -29,6 +29,8 @@ library(tibble)
 library(readr)
 library(dplyr)
 library(xlsx)
+library(stringr)
+library(text2vec)
 
 ```
 
@@ -41,7 +43,7 @@ Getting a list of ADC grant award numbers to use as a query
     result <-
         query(mn, list(
                     q = "formatType:METADATA AND (*:* NOT obsoletedBy:*)",
-                    fl = "identifier,rightsHolder,formatId, funding",
+                    fl = "identifier,rightsHolder,formatId, funding, abstract",
                     start = "0",
                     rows = "15000"),
                 as = "data.frame"
@@ -51,7 +53,7 @@ Getting a list of ADC grant award numbers to use as a query
 
 #Isolating the grant numbers
 funding_and_doi <- result %>%
-  select(identifier, funding)
+  select(identifier, funding, abstract)
 
 #Just keeping the numbers, removing any extra text
 funding_and_doi$funding <- as.numeric(gsub("([0-9]+).*$", "\\1", funding_and_doi$funding))
@@ -66,405 +68,49 @@ ADC_funding_and_doi <- ADC_funding_and_doi%>%
   rename("ADC_doi" = "identifier")
 
 ```
-
 ```{r}
 
-#This is the most inefficient step. I don't know how to make it run through every award number in the list
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1417789")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
 
-json_result <- jsonlite::fromJSON(query_url)
+awards <- unique(ADC_funding_and_doi$funding)
+# create an empty list to store results in
+pub <- list()
+  for (i in seq_along(awards)){
+  print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
+  query_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=", awards[i], '&printFields=', print_fields)
+  json_result <- jsonlite::fromJSON(query_url)
+  
+   if (is.null(json_result$response$award$publicationResearch))
+            pub[[i]] <- data.frame(Pub_citation = NA,
+                                            funding = awards[i], 
+                                   pub_abstract = NA) 
+  
+  else if (!is.null(json_result$response$award$publicationResearch)) {
+     pub[[i]] <- data.frame(Pub_citation = json_result$response$award$publicationResearch,
+                                            funding = awards[i], pub_abstract = json_result$response$award$abstractText)  
+    
+     colnames(pub[[i]]) <- c("Pub_citation", "funding", "pub_abstract")
+    
+  }}
 
-pub1 <- json_result$response$award$publicationResearch
 
-#Turning the nested list into a data table
-dfs <- lapply(pub1 , data.frame, stringsAsFactors = FALSE)
 
-pub1 <- plyr::rbind.fill(dfs)
+dfs <- lapply(pub , data.frame, stringsAsFactors = FALSE)
+pub_df <- plyr::rbind.fill(dfs)
 
 #Making sure the class is numeric so it can be used as a key to join tables
-pub1$funding <- as.numeric(json_result$response$award$id)
-
-#Renaming the column to make sense
-pub1 <- pub1 %>% rename("Pub_citation" = "X..i..")
-
-#Just poking around thinking about how to improve this process
-#abs1 <- json_result$response$award$abstractText[1]
-
-#cit1 <- json_result$response$award$publicationResearch[1]
-
-
-
+#pub$funding <- as.numeric(json_result$response$award$id)
 
 ```
 
-```{r}
 
-#Award 2
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1418000")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub2 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub2 , data.frame, stringsAsFactors = FALSE)
-
-pub2 <- plyr::rbind.fill(dfs)
-
-pub2$funding <- as.numeric(json_result$response$award$id)
-
-pub2 <- pub2 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#award 3
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1148800")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub3 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub3 , data.frame, stringsAsFactors = FALSE)
-
-pub3 <- plyr::rbind.fill(dfs)
-
-pub3$funding <- as.numeric(json_result$response$award$id)
-
-pub3 <- pub3 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#award 4
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1107892")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub4 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub4 , data.frame, stringsAsFactors = FALSE)
-
-pub4 <- plyr::rbind.fill(dfs)
-
-pub4$funding <- as.numeric(json_result$response$award$id)
-
-pub4 <- pub4 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#award 5
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1203902")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub5 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub5 , data.frame, stringsAsFactors = FALSE)
-
-pub5 <- plyr::rbind.fill(dfs)
-
-pub5$funding <- as.numeric(json_result$response$award$id)
-
-pub5 <- pub5 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#award 6
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1107106")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub6 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub6 , data.frame, stringsAsFactors = FALSE)
-
-pub6 <- plyr::rbind.fill(dfs)
-
-pub6$funding <- as.numeric(json_result$response$award$id)
-
-pub6 <- pub6 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#award 7
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1107481")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub7 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub7 , data.frame, stringsAsFactors = FALSE)
-
-pub7 <- plyr::rbind.fill(dfs)
-
-pub7$funding <- as.numeric(json_result$response$award$id)
-
-pub7 <- pub7 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#award 8
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1204082")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub8 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub8 , data.frame, stringsAsFactors = FALSE)
-
-pub8 <- plyr::rbind.fill(dfs)
-
-pub8$funding <- as.numeric(json_result$response$award$id)
-
-pub8 <- pub8 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#unique(ADC_funding_and_doi$funding)
-#award 9
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1432982")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub9 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub9 , data.frame, stringsAsFactors = FALSE)
-
-pub9 <- plyr::rbind.fill(dfs)
-
-pub9$funding <- as.numeric(json_result$response$award$id)
-
-pub9 <- pub9 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#unique(ADC_funding_and_doi$funding)
-#award 10
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1545558")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub10 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub10 , data.frame, stringsAsFactors = FALSE)
-
-pub10 <- plyr::rbind.fill(dfs)
-
-pub10$funding <- as.numeric(json_result$response$award$id)
-
-pub10 <- pub10 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#unique(ADC_funding_and_doi$funding)
-#award 11
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1460290")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub11 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub11 , data.frame, stringsAsFactors = FALSE)
-
-pub11 <- plyr::rbind.fill(dfs)
-
-pub11$funding <- as.numeric(json_result$response$award$id)
-
-pub11 <- pub11 %>% rename("Pub_citation" = "X..i..")
-
-```
-```{r}
-
-#unique(ADC_funding_and_doi$funding)
-#award 12
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1303895")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub12 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub12 , data.frame, stringsAsFactors = FALSE)
-
-pub12 <- plyr::rbind.fill(dfs)
-
-pub12$funding <- as.numeric(json_result$response$award$id)
-
-pub12 <- pub12 %>% rename("Pub_citation" = "X..i..")
-
-```
-```{r}
-
-#unique(ADC_funding_and_doi$funding)
-#award 13
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1560908")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub13 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub13, data.frame, stringsAsFactors = FALSE)
-
-pub13 <- plyr::rbind.fill(dfs)
-
-pub13$funding <- as.numeric(json_result$response$award$id)
-
-pub13 <- pub13 %>% rename("Pub_citation" = "X..i..")
-
-```
-```{r}
-
-#unique(ADC_funding_and_doi$funding)
-#award 14
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1417436")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub14 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub14, data.frame, stringsAsFactors = FALSE)
-
-pub14 <- plyr::rbind.fill(dfs)
-
-pub14$funding <- as.numeric(json_result$response$award$id)
-
-pub14 <- pub14 %>% rename("Pub_citation" = "X..i..")
-
-```
-
-```{r}
-
-#unique(ADC_funding_and_doi$funding)
-#award 15
-base_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=1023574")
-#t <- jsonlite::fromJSON(url)
-print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
-query_url <- paste0(base_url,'&printFields=', print_fields)
-
-json_result <- jsonlite::fromJSON(query_url)
-
-pub15 <- json_result$response$award$publicationResearch
-
-#Turning the nested list into a data table
-dfs <- lapply(pub15, data.frame, stringsAsFactors = FALSE)
-
-pub15 <- plyr::rbind.fill(dfs)
-
-pub15$funding <- as.numeric(json_result$response$award$id)
-
-pub15 <- pub15 %>% rename("Pub_citation" = "X..i..")
-
-```
 Joining all of the award qury outputs with the ADC info and then merging those
 
 ```{r}
 
-table1 <- full_join(ADC_funding_and_doi, pub1, by = 'funding')
+full_table1 <- full_join(ADC_funding_and_doi, pub_df, by = 'funding')
 
-table2 <- full_join(ADC_funding_and_doi, pub2, by = 'funding')
-
-table3 <- full_join(ADC_funding_and_doi, pub3, by = 'funding')
-
-table4 <- full_join(ADC_funding_and_doi, pub4, by = 'funding')
-
-table5 <- full_join(ADC_funding_and_doi, pub5, by = 'funding')
-
-table6 <- full_join(ADC_funding_and_doi, pub6, by = 'funding')
-
-table7 <- full_join(ADC_funding_and_doi, pub7, by = 'funding')
-
-table8 <- full_join(ADC_funding_and_doi, pub8, by = 'funding')
-
-table9 <- full_join(ADC_funding_and_doi, pub9, by = 'funding')
-
-table10 <- full_join(ADC_funding_and_doi, pub10, by = 'funding')
-
-table11 <- full_join(ADC_funding_and_doi, pub11, by = 'funding')
-
-table12 <- full_join(ADC_funding_and_doi, pub12, by = 'funding')
-
-#I wrote a function for this but it doesn't really save any time
-#table12 <- join_tbls(new_table = pub12)
-
-table13 <- full_join(ADC_funding_and_doi, pub13, by = 'funding')
-
-table14 <- full_join(ADC_funding_and_doi, pub14, by = 'funding')
-
-table15 <- full_join(ADC_funding_and_doi, pub15, by = 'funding')
-
-#Merge them all
-master_table <- Reduce(function(...) merge(..., all=TRUE), list(table1, table2, table3, table4, table5, table6, table7, table8, table9, table10, table11, table12, table13, table14, table15))
-
+#ended up with some duplicate rows. Removing them here
+full_table <- full_table[!duplicated(full_table1$Pub_citation), ]
 
 ```
 
@@ -473,11 +119,114 @@ Save as a csv
 ```{r}
 
 
-write.csv(master_table,"ADC_pubs_KPEACH.csv", row.names = FALSE)
+write.csv(full_table,"ADC_pubs_KPEACH.csv", row.names = FALSE)
+
+```
+
+Clean up abstracts to prepare them for text similarity analysis
+```{r}
+
+
+prep_fun = function(x) {
+    # make text lower case
+    x = str_to_lower(x)
+    # remove non-alphanumeric symbols
+    x = str_replace_all(x, "[^[:alnum:]]", " ")
+    # collapse multiple spaces
+    str_replace_all(x, "\\s+", " ")
+}
+
+full_table$abstract <- prep_fun(full_table$abstract)
+
+full_table$pub_abstract <- prep_fun(full_table$pub_abstract)
+
+```
+
+Julien said that sometimes datasets have exactly the same abstract so I thought maybe agrep would work but that must not be super common practice
+
+```{r}
+
+agrep(full_table$abstract[2], full_table$pub_abstract, ignore.case=T,value=T,max.distance = 0.1, useBytes = FALSE)
 
 ```
 
 
+Making two corpuses (?) 
+
+```{r}
+
+#A corpus of ADc dataset dois
+corp1 = quanteda::corpus(full_table, text_field= 'abstract')
+dtm1 = dfm(corp1)
+
+dtm1
+
+#A corpus of pub abstracts
+corp2 = quanteda::corpus(full_table, docid_field = 'Pub_citation', text_field= 'pub_abstract')
+dtm2 = dfm(corp2)
+
+dtm2
+
+
+```
+
+
+
+
+Define two sets of documents to compare
+
+```{r}
+
+it1 <- itoken(full_table$abstract, progressbar = FALSE)
+
+
+it2 <- itoken(full_table$pub_abstract, progressbar = FALSE)
+
+```
+
+We will compare documents in a vector space. So we need to define common space and project documents to it. We will use vocabulary-based vectorization vectorization for better interpretability:
+
+```{r}
+
+it = itoken(full_table$pub_abstract, progressbar = FALSE)
+v = create_vocabulary(it)
+v = prune_vocabulary(v, doc_proportion_max = 0.1, term_count_min = 5)
+vectorizer = vocab_vectorizer(v)
+
+
+```
+
+Jaccard similarity is a simple but intuitive measure of similarity between two sets. For documents we measure it as proportion of number of common words to number of unique words in both documents. In the field of NLP jaccard similarity can be particularly useful for duplicates detection. text2vec however provides generic efficient realization which can be used in many other applications.
+
+For calculation of jaccard similarity between 2 sets of documents user have to provide DTM for each them (DTMs should be in the same vector space!):
+```{r}
+
+# they will be in the same space because we use same vectorizer
+# hash_vectorizer will also work fine
+dtm1 = create_dtm(it1, vectorizer)
+dim(dtm1)
+
+dtm2 = create_dtm(it2, vectorizer)
+dim(dtm2)
+
+d1_d2_jac_sim = sim2(dtm1, dtm2, method = "jaccard", norm = "none")
+
+dim(d1_d2_jac_sim)
+
+dtm1_2 = dtm1[1:200, ]
+dtm2_2 = dtm2[1:200, ]
+d1_d2_jac_psim = psim2(dtm1_2, dtm2_2, method = "jaccard", norm = "none")
+str(d1_d2_jac_psim)
+
+```
+
+```{r}
+
+d1_d2_cos_sim = sim2(dtm1, dtm2, method = "cosine", norm = "l2")
+
+dim(d1_d2_cos_sim)
+
+```
 
 
 Getting a list of data package DOI's from the ADC
