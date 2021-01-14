@@ -1,0 +1,323 @@
+---
+title: "using_pubchunks_ADC_citations"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#install.packages("pubchunks")
+library(pubchunks)
+#install.packages("fulltext")
+library(fulltext)
+
+library(arcticdatautils)
+library(dataone)
+library(datapack)
+library(EML)
+library(remotes)
+library(XML)
+library(datamgmt)
+library(tidyverse)
+library(here)
+#install.packages("reprex")
+library(reprex)
+library(tibble)
+library(readr)
+library(dplyr)
+library(xlsx)
+library(stringr)
+library(text2vec)
+
+```
+
+Getting a list of ADC grant award numbers to use as a query
+```{r}
+
+ cn <- CNode("PROD")
+    mn <- getMNode(cn, "urn:node:ARCTIC")
+
+    result <-
+        query(mn, list(
+                    q = "formatType:METADATA AND (*:* NOT obsoletedBy:*)",
+                    fl = "identifier,rightsHolder,formatId, funding, abstract",
+                    start = "0",
+                    rows = "15000"),
+                as = "data.frame"
+        )
+    dois <- grep("doi", result$identifier, value = T) %>%
+        gsub("doi:", "", .data$.)
+
+#Isolating the grant numbers
+funding_and_doi <- result %>%
+  select(identifier, funding, abstract)
+
+#Just keeping the numbers, removing any extra text
+funding_and_doi$funding <- as.numeric(gsub("([0-9]+).*$", "\\1", funding_and_doi$funding))
+
+ADC_funding_and_doi <- na.omit(funding_and_doi)
+
+#Seeing how many unique award number their are
+unique(ADC_funding_and_doi$funding)
+
+#renaming the column so I don't get confused about what it is
+ADC_funding_and_doi <- ADC_funding_and_doi%>% 
+  rename("ADC_doi" = "identifier")
+
+```
+```{r}
+
+
+awards <- unique(ADC_funding_and_doi$funding)
+# create an empty list to store results in
+pub <- list()
+  for (i in seq_along(awards)){
+  print_fields <- 'id,date,startDate,fundProgramName,poName,title,awardee,piFirstName,piLastName,publicationResearch,publicationConference,abstractText'
+  query_url <- paste0("https://api.nsf.gov/services/v1/awards.json?id=", awards[i], '&printFields=', print_fields)
+  json_result <- jsonlite::fromJSON(query_url)
+  
+   if (is.null(json_result$response$award$publicationResearch))
+            pub[[i]] <- data.frame(Pub_citation = NA,
+                                            funding = awards[i], 
+                                   pub_abstract = NA) 
+  
+  else if (!is.null(json_result$response$award$publicationResearch)) {
+     pub[[i]] <- data.frame(Pub_citation = json_result$response$award$publicationResearch,
+                                            funding = awards[i], pub_abstract = json_result$response$award$abstractText)  
+    
+     colnames(pub[[i]]) <- c("Pub_citation", "funding", "pub_abstract")
+    
+  }}
+
+
+
+dfs <- lapply(pub , data.frame, stringsAsFactors = FALSE)
+pub_df <- plyr::rbind.fill(dfs)
+
+pub_df$funding <- as.numeric(pub_df$funding)
+#Making sure the class is numeric so it can be used as a key to join tables
+#pub$funding <- as.numeric(json_result$response$award$id)
+
+```
+
+
+Joining all of the award qury outputs with the ADC info and then merging those
+
+```{r}
+
+full_table1 <- full_join(ADC_funding_and_doi, pub_df, by = 'funding')
+
+#ended up with some duplicate rows. Removing them here. Any of these methods work, I just kept trying different methods because it looked like there were still duplicates, but it looks like some publications were listed twice and there are small, formatting differences in their citations
+  
+#full_table <- full_table1[!duplicated(full_table1$'Pub_citation'), ]
+
+#full_table <- unique(full_table1)
+
+full_table <- full_table1 %>% distinct(Pub_citation, .keep_all = TRUE)
+
+```
+
+
+
+Clean up abstracts to prepare them for text similarity analysis
+```{r}
+
+
+prep_fun = function(x) {
+    # make text lower case
+    x = str_to_lower(x)
+    # remove non-alphanumeric symbols
+    x = str_replace_all(x, "[^[:alnum:]]", " ")
+    # collapse multiple spaces
+    str_replace_all(x, "\\s+", " ")
+}
+
+full_table$abstract <- prep_fun(full_table$abstract)
+
+full_table$pub_abstract <- prep_fun(full_table$pub_abstract)
+
+```
+
+Julien said that sometimes datasets have exactly the same abstract so I thought maybe agrep would work but that must not be super common practice
+
+```{r}
+
+agrep(full_table$abstract[2], full_table$pub_abstract, ignore.case=T,value=T,max.distance = 0.1, useBytes = FALSE)
+
+```
+The similarity is calculated by first calculating the distance using stringdist, dividing the distance by the maximum possible distance, and substracting the result from 1. This results in a score between 0 and 1, with 1 corresponding to complete similarity and 0 to complete dissimilarity. 
+
+Methods available using stringsim function (default is osa):  method = c("osa", "lv", "dl", "hamming", "lcs", "qgram", "cosine", "jaccard", "jw",
+    "soundex")
+
+More info about each method can be found here: https://www.rdocumentation.org/packages/stringdist/versions/0.9.6.3/topics/stringdist-metrics
+
+```{r}
+
+full_table$osa_similarities <- stringdist::stringsim(full_table$abstract , full_table$pub_abstract)
+
+#Using jaccard. Jaccard similarity is as proportion of number of common words to number of unique words in both documents.
+full_table$jacc_similarities <- stringdist::stringsim(full_table$abstract , full_table$pub_abstract, method = "jaccard")
+
+#The Levenshtein distance (method='lv') counts the number of deletions, insertions and substitutions necessary to turn b into a. This method is equivalent to R's native adist function.
+full_table$lv_similarities <- stringdist::stringsim(full_table$abstract , full_table$pub_abstract, method = "lv")
+
+#The full Damerau-Levenshtein distance (method='dl') is like the optimal string alignment distance except that it allows for multiple edits on substrings.
+full_table$dl_similarities <- stringdist::stringsim(full_table$abstract , full_table$pub_abstract, method = "dl")
+
+#The longest common substring (method='lcs') is defined as the longest string that can be obtained by pairing characters from a and b while keeping the order of characters intact. The lcs-distance is defined as the number of unpaired characters. The distance is equivalent to the edit distance allowing only deletions and insertions, each with weight one.
+full_table$lcs_similarities <- stringdist::stringsim(full_table$abstract , full_table$pub_abstract, method = "lcs")
+
+
+
+```
+
+High text similarity tables - Jaccard
+
+The Jaccard similarity index (sometimes called the Jaccard similarity coefficient) compares members for two sets to see which members are shared and which are distinct. It’s a measure of similarity for the two sets of data, with a range from 0% to 100%. The higher the percentage, the more similar the two populations.
+
+Example:
+A simple example using set notation: How similar are these two sets?
+
+A = {0,1,2,5,6}
+B = {0,2,3,4,5,7,9}
+
+Solution: J(A,B) = |A∩B| / |A∪B| = |{0,2,5}| / |{0,1,2,3,4,5,6,7,9}| = 3/9 = 0.33.
+
+```{r}
+
+full_table_high_jacc <- full_table %>% filter(jacc_similarities > .90)
+
+write.csv(full_table_high_jacc,"ADC_high_similarity_jacc_KPEACH.csv", row.names = FALSE)
+
+```
+
+Save as a csv
+
+```{r}
+
+
+write.csv(full_table,"ADC_pubs_KPEACH.csv", row.names = FALSE)
+
+```
+
+
+Getting a list of data package DOI's from the ADC
+
+```{r}
+
+ cn <- CNode("PROD")
+    mn <- getMNode(cn, "urn:node:ARCTIC")
+
+    result <-
+        query(mn, list(
+                    q = "formatType:METADATA AND (*:* NOT obsoletedBy:*)",
+                    fl = "identifier,rightsHolder,formatId",
+                    start = "0",
+                    rows = "15000"),
+                as = "data.frame"
+        )
+    dois <- grep("doi", result$identifier, value = T) %>%
+        gsub("doi:", "", .data$.)
+
+dois <- result$identifier 
+
+#Took a random sample of dois from the list
+
+doi_100_sample <- sample(dois, 100)
+
+doi_10_sample <- sample(dois, 10)
+
+
+```
+
+Queried several databases for publications that include any of the dois in my sample. Also queried single dois and did not find any results
+
+```{r}
+
+res <- ft_search(query = 'doi:10.5065/D6M043F3', from=c('plos','crossref','arxiv', 'biorxivr', 'europe_pmc', 'ma'), limit = 10)
+
+articles <- ft_get(res$plos$data$id)
+
+titles <- pub_chunks(fulltext::ft_collect(articles), sections="title")
+
+
+```
+
+
+Simple ADC Search
+
+To find documents where your search terms appear adjacent to each other, enclose the terms in double quotation marks: "cell behaviour". When you use double quotation marks AND is not automatically inserted between terms.
+
+```{r, message = FALSE}
+
+res1 <- ft_search(query = "Arctic Data Center", from=c('plos','crossref','arxiv', 'biorxivr', 'europe_pmc', 'ma'), limit = 1000)
+
+plos_articles <- ft_get(res1$plos$data$id[1:1000])
+
+plos_titles <- pub_chunks(fulltext::ft_collect(plos_articles), sections= c("doi", "title", "authors"))
+
+plos_table <- pub_tabularize(plos_titles, bind = TRUE)
+
+plos_table <- plos_table %>% select(doi, title, authors.given_names, authors.surname, authors.given_names.1, authors.surname.1, authors.given_names.2, authors.surname.2, authors.given_names.3, authors.surname.3, .publisher)
+
+write.xlsx(plos_table, file = "plos_table.xlsx", sheetName = "Sheet1", 
+  col.names = TRUE, row.names = FALSE, append = FALSE)
+
+```
+
+
+
+```{r}
+
+res2 <- ft_search(query = 'arcticdata.io', from=c('plos','crossref','arxiv', 'biorxivr', 'europe_pmc', 'ma'), limit = 100)
+
+plos_articles_io <- ft_get(res2$plos$data$id)
+
+plos_titles_io <- pub_chunks(fulltext::ft_collect(plos_articles_io), sections= c("doi", "title", "authors"))
+
+plos_table_io <- pub_tabularize(plos_titles_io, bind = TRUE)
+
+plos_table_io <- plos_table_io %>% select(doi, title, authors.given_names, authors.surname, authors.given_names.1, authors.surname.1, authors.given_names.2, authors.surname.2, authors.given_names.3, authors.surname.3, .publisher)
+
+
+write.xlsx(plos_table_io, file = "plos_table_io.xlsx", sheetName = "Sheet1", col.names = TRUE, row.names = FALSE, append = FALSE)
+
+
+```
+
+Using curling brackets within the query searches for an exact match to the phrase "Arctic Data Center". Plos does not allow for this type of search so we have to exclude it or the code won't run.
+
+```{r}
+
+
+
+res3 <- ft_search(query = "{Arctic Data Center}", from=c('crossref','arxiv', 'biorxiv', 'europmc'), limit = 100)
+
+#For some reason I can't pull article titles from Biorxiv but I can get doi's
+
+biorxiv_articles_exact <- ft_get(res3$biorxiv$data$doi[1:21])
+
+biorxiv_titles_exact <- pub_chunks(fulltext::ft_collect(biorxiv_articles_exact), sections = c("doi", "title", "authors"))
+
+biorxiv_table_exact <- unlist(biorxiv_titles_exact$biorxiv[1:21])
+
+View(biorxiv_table_exact)
+
+
+write.xlsx(biorxiv_table_exact, file = "biorxiv_table_exact.xlsx", sheetName = "Sheet1", 
+  col.names = TRUE, row.names = FALSE, append = FALSE)
+
+```
+
+
+
+
+
+
+
+
+
